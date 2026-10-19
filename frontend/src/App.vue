@@ -25,25 +25,35 @@
       </el-card>
     </div>
 
-    <!-- 已登录 -->
     <div v-else>
+      <!-- 顶部 -->
       <el-header class="header">
-        <span>🚩 CTF Training Platform</span>
+        <span>🚩 {{ contest.name || 'CTF' }}</span>
         <span>
           <el-button v-if="role==='admin'" link @click="adminDialog=true">🛠 管理后台</el-button>
-          当前积分：<b style="color:#67c23a">{{ score }}</b>
-          &nbsp;&nbsp;{{ username }}
+          <el-button link @click="showMe">👤 我的数据</el-button>
+          积分：<b style="color:#67c23a">{{ score }}</b> {{ username }}
           <el-button link @click="logout">退出</el-button>
         </span>
       </el-header>
+
+      <!-- 倒计时 -->
+      <div v-if="contest.end_time" class="countdown">
+        ⏳ 距离比赛结束：<b>{{ countdown }}</b>
+      </div>
+
+      <!-- 公告 -->
+      <el-alert v-for="a in announcements" :key="a.id" :title="`[${a.title}] ${a.content}`"
+                type="warning" :closable="false" style="margin:8px 16px" />
 
       <el-container class="main">
         <el-row :gutter="16">
           <el-col :span="16">
             <el-card shadow="never">
               <template #header>
-                <div style="display:flex;justify-content:space-between;align-items:center">
-                  <b>题目列表（共 {{ challenges.length }} 题）</b>
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                  <b>题目（共 {{ challenges.length }} 题）</b>
+                  <el-input v-model="kw" size="small" placeholder="搜索题目..." style="width:200px" />
                   <el-radio-group v-model="filterCat" size="small">
                     <el-radio-button label="">全部</el-radio-button>
                     <el-radio-button label="web">Web</el-radio-button>
@@ -53,20 +63,26 @@
                   </el-radio-group>
                 </div>
               </template>
-              <el-table :data="filteredChallenges" border size="small" @row-click="openDetail" style="cursor:pointer">
-                <el-table-column prop="id" label="#" width="60" />
-                <el-table-column prop="title" label="题目" />
-                <el-table-column prop="category" label="分类" width="90">
+              <el-table :data="filtered" border size="small" @row-click="openDetail" style="cursor:pointer">
+                <el-table-column prop="id" label="#" width="50" />
+                <el-table-column prop="title" label="题目">
+                  <template #default="s">
+                    {{ s.row.title }}
+                    <el-tag v-if="s.row.bloods && s.row.bloods.length" size="mini" type="danger" style="margin-left:6px">
+                      🩸 {{ s.row.bloods[0] }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="category" label="分类" width="80">
                   <template #default="s"><el-tag size="small">{{ s.row.category }}</el-tag></template>
                 </el-table-column>
-                <el-table-column prop="difficulty" label="难度" width="90">
+                <el-table-column prop="difficulty" label="难度" width="80">
                   <template #default="s"><el-tag size="small" :type="diffType(s.row.difficulty)">{{ s.row.difficulty }}</el-tag></template>
                 </el-table-column>
-                <el-table-column prop="score" label="分值" width="80" />
-                <el-table-column label="状态" width="90">
+                <el-table-column prop="score" label="当前分" width="80" />
+                <el-table-column label="" width="60">
                   <template #default="s">
                     <el-tag v-if="s.row.solved" type="success" size="small">✓</el-tag>
-                    <el-tag v-else type="info" size="small">-</el-tag>
                   </template>
                 </el-table-column>
               </el-table>
@@ -75,11 +91,12 @@
 
           <el-col :span="8">
             <el-card shadow="never">
-              <template #header><b>🏆 排行榜</b></template>
-              <el-table :data="board" size="small">
+              <template #header><b>🏆 排行榜</b>
+                <el-button size="small" link @click="exportBoard">导出CSV</el-button>
+              </template>
+              <el-table :data="board" size="small" max-height="500">
                 <el-table-column prop="rank" label="#" width="50" />
                 <el-table-column prop="username" label="选手" />
-                <el-table-column prop="team" label="战队" width="100" />
                 <el-table-column prop="score" label="分" width="70" />
               </el-table>
             </el-card>
@@ -87,89 +104,105 @@
         </el-row>
       </el-container>
 
-      <!-- 题目详情抽屉 -->
-      <el-drawer v-model="drawer" :title="current.title" size="560px">
-        <el-alert v-if="envUrl" type="success" :closable="false" style="margin-bottom:12px" :title="`靶机环境：${envUrl}`">
-          <el-button size="small" @click="openEnv(envUrl)">打开靶机</el-button>
-          <el-button size="small" @click="stopEnv">关闭环境</el-button>
+      <!-- 题目详情 -->
+      <el-drawer v-model="drawer" :title="current.title" size="600px">
+        <el-alert v-if="current.external_url" type="primary" :closable="false" style="margin-bottom:10px">
+          靶机：<a :href="current.external_url" target="_blank">{{ current.external_url }}</a>
         </el-alert>
-        <el-alert v-if="envMsg" type="warning" :closable="false" style="margin-bottom:12px" :title="envMsg" />
-        <el-alert v-if="current.external_url" type="primary" :closable="false" style="margin-bottom:12px">
-          外部靶机：<a :href="current.external_url" target="_blank">{{ current.external_url }}</a>
+        <el-alert v-if="envUrl" type="success" :closable="false" style="margin-bottom:10px">
+          环境：{{ envUrl }}
+          <el-button size="small" @click="openEnv(envUrl)">打开</el-button>
+          <el-button size="small" @click="renewEnv">续期</el-button>
+          <el-button size="small" @click="stopEnv">关闭</el-button>
         </el-alert>
 
         <h4>题目描述</h4>
-        <pre style="white-space:pre-wrap;background:#f6f8fa;padding:12px;border-radius:6px">{{ current.description }}</pre>
+        <pre style="white-space:pre-wrap;background:#f6f8fa;padding:10px">{{ current.description }}</pre>
 
-        <p v-if="current.static_url">静态资源：<a :href="current.static_url" target="_blank">{{ current.static_url }}</a></p>
-
-        <div v-if="current.attachments && current.attachments.length">
-          <h4>附件</h4>
-          <el-button v-for="a in current.attachments" :key="a.id" size="small"
-                     style="margin-right:8px" @click="downloadAttach(a.id)">
+        <div v-if="current.attachments?.length">
+          <el-button v-for="a in current.attachments" :key="a.id" size="small" @click="downloadAttach(a.id)">
             📎 {{ a.filename }}
           </el-button>
         </div>
 
         <el-divider />
-        <h4>提交 Flag</h4>
-        <el-input v-model="flagInput" placeholder="flag{...}" />
-        <el-button type="primary" style="margin-top:10px" @click="doSubmit">提交</el-button>
-        <el-button v-if="current.has_docker" style="margin-top:10px" @click="startEnv">🚀 启动环境</el-button>
+        <h4>提示（购买扣分）</h4>
+        <div v-for="h in current.hints" :key="h.id" style="margin-bottom:8px">
+          <span v-if="h.bought">{{ h.content }}</span>
+          <el-button v-else size="small" @click="buyHint(h.id)">花 {{ h.cost }} 分买提示</el-button>
+        </div>
 
         <el-divider />
-        <h4>提交 WriteUp</h4>
-        <el-upload :http-request="uploadWriteup" :show-file-list="false" style="display:inline-block;margin-right:10px">
-          <el-button size="small">选择文件 (.md/.pdf)</el-button>
-        </el-upload>
-        <el-input v-model="wuNote" placeholder="可选：写一段解题思路备注" size="small" style="width:280px" />
+        <el-input v-model="flagInput" placeholder="flag{...}" />
+        <el-button type="primary" style="margin-top:8px" @click="doSubmit">提交</el-button>
+        <el-button v-if="current.has_docker" style="margin-top:8px" @click="startEnv">🚀 启动环境</el-button>
+
+        <el-divider />
+        <h4>讨论区</h4>
+        <el-input v-model="commentText" placeholder="友好讨论，禁止发 flag" />
+        <el-button size="small" style="margin-top:6px" @click="postComment">发送</el-button>
+        <div v-for="c in comments" :key="c.id" style="margin-top:8px;font-size:13px">
+          <b :style="{color: c.is_admin ? '#e6a23c' : '#409eff'}">{{ c.username }}</b>
+          <span style="color:#999;margin:0 6px">{{ c.created_at }}</span>
+          <div>{{ c.content }}</div>
+        </div>
       </el-drawer>
 
-      <!-- 管理员后台 -->
-      <el-dialog v-model="adminDialog" title="🛠 管理员后台：新建题目" width="640px">
-        <el-form :model="newCh" label-width="100px">
-          <el-form-item label="标题"><el-input v-model="newCh.title" /></el-form-item>
-          <el-form-item label="分类">
-            <el-select v-model="newCh.category">
-              <el-option label="Web" value="web" />
-              <el-option label="Misc" value="misc" />
-              <el-option label="Crypto" value="crypto" />
-              <el-option label="Reverse" value="reverse" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="难度">
-            <el-select v-model="newCh.difficulty">
-              <el-option label="Easy" value="easy" />
-              <el-option label="Medium" value="medium" />
-              <el-option label="Hard" value="hard" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="分值"><el-input v-model.number="newCh.score_value" type="number" /></el-form-item>
-          <el-form-item label="Flag"><el-input v-model="newCh.flag" placeholder="flag{...}" /></el-form-item>
-          <el-form-item label="描述"><el-input v-model="newCh.description" type="textarea" :rows="4" /></el-form-item>
-          <el-divider>靶机配置（三选一）</el-divider>
-          <el-form-item label="外部靶机 URL">
-            <el-input v-model="newCh.external_url" placeholder="https://your-server:port （推荐：直接填你自己服务器的地址）" />
-          </el-form-item>
-          <el-form-item label="Docker 镜像">
-            <el-input v-model="newCh.docker_image" placeholder="如 vulhub/sqli-labs:latest（留空则不用平台拉起）" />
-          </el-form-item>
-          <el-form-item label="容器端口"><el-input v-model.number="newCh.docker_port" type="number" placeholder="如 80" /></el-form-item>
-          <el-form-item label="静态链接"><el-input v-model="newCh.static_url" placeholder="选填" /></el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="adminDialog=false">取消</el-button>
-          <el-button type="primary" @click="createChallenge">创建题目</el-button>
-        </template>
+      <!-- 我的数据 -->
+      <el-dialog v-model="meDialog" title="👤 我的解题数据" width="500px">
+        <div ref="radarRef" style="width:100%;height:300px"></div>
+      </el-dialog>
+
+      <!-- 管理员 -->
+      <el-dialog v-model="adminDialog" title="🛠 管理员" width="600px">
+        <el-tabs v-model="adminTab">
+          <el-tab-pane label="比赛设置" name="contest">
+            <el-form :model="contestForm" label-width="100px">
+              <el-form-item label="赛事名"><el-input v-model="contestForm.name" /></el-form-item>
+              <el-form-item label="开始时间"><el-input v-model="contestForm.start_time" placeholder="2026-01-01 09:00:00" /></el-form-item>
+              <el-form-item label="结束时间"><el-input v-model="contestForm.end_time" placeholder="2026-01-02 18:00:00" /></el-form-item>
+              <el-button type="primary" @click="saveContest">保存</el-button>
+            </el-form>
+          </el-tab-pane>
+          <el-tab-pane label="发布公告" name="anno">
+            <el-form :model="annoForm" label-width="80px">
+              <el-form-item label="标题"><el-input v-model="annoForm.title" /></el-form-item>
+              <el-form-item label="内容"><el-input v-model="annoForm.content" type="textarea" /></el-form-item>
+              <el-button type="primary" @click="postAnno">发布</el-button>
+            </el-form>
+          </el-tab-pane>
+          <el-tab-pane label="新建题目" name="new">
+            <el-form :model="newCh" label-width="100px">
+              <el-form-item label="标题"><el-input v-model="newCh.title" /></el-form-item>
+              <el-form-item label="分类">
+                <el-select v-model="newCh.category">
+                  <el-option v-for="c in ['web','misc','crypto','reverse']" :key="c" :label="c" :value="c" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="难度">
+                <el-select v-model="newCh.difficulty">
+                  <el-option v-for="d in ['easy','medium','hard']" :key="d" :label="d" :value="d" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="起始分"><el-input v-model.number="newCh.base_score" type="number" /></el-form-item>
+              <el-form-item label="最低分"><el-input v-model.number="newCh.min_score" type="number" /></el-form-item>
+              <el-form-item label="Flag"><el-input v-model="newCh.flag" /></el-form-item>
+              <el-form-item label="描述"><el-input v-model="newCh.description" type="textarea" :rows="3" /></el-form-item>
+              <el-form-item label="外部URL"><el-input v-model="newCh.external_url" /></el-form-item>
+              <el-button type="primary" @click="createChallenge">创建</el-button>
+            </el-form>
+          </el-tab-pane>
+        </el-tabs>
       </el-dialog>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import * as echarts from 'echarts'
 
 const token = ref(localStorage.getItem('token') || '')
 const username = ref(localStorage.getItem('username') || '')
@@ -179,113 +212,131 @@ const tab = ref('login')
 const loginForm = ref({ username: '', password: '' })
 const regForm = ref({ username: '', password: '', team: '' })
 
-const challenges = ref([])
-const board = ref([])
-const filterCat = ref('')
+const challenges = ref([]), board = ref([]), announcements = ref([])
+const filterCat = ref(''), kw = ref('')
+const contest = ref({}), countdown = ref('')
+let timer = null
 
-const drawer = ref(false)
-const current = ref({})
-const flagInput = ref('')
-const envUrl = ref('')
-const envMsg = ref('')
-const wuNote = ref('')
+const drawer = ref(false), current = ref({}), flagInput = ref('')
+const envUrl = ref(''), commentText = ref(''), comments = ref([])
+const meDialog = ref(false), radarRef = ref(null)
+const adminDialog = ref(false), adminTab = ref('contest')
+const contestForm = ref({ name: '', start_time: '', end_time: '' })
+const annoForm = ref({ title: '', content: '' })
+const newCh = ref({ title:'', category:'web', difficulty:'easy', base_score:500,
+                    min_score:100, flag:'', description:'', external_url:'' })
 
-const adminDialog = ref(false)
-const newCh = ref({ title:'', category:'web', difficulty:'easy', score_value:100,
-                    flag:'', description:'', external_url:'', docker_image:'',
-                    docker_port:0, static_url:'' })
-
-const filteredChallenges = computed(() =>
-  challenges.value.filter(c => !filterCat.value || c.category === filterCat.value))
+const filtered = computed(() => challenges.value.filter(c =>
+  (!filterCat.value || c.category === filterCat.value) &&
+  (!kw.value || c.title.toLowerCase().includes(kw.value.toLowerCase()))))
 
 const onLogin = async () => {
   try {
     const { data } = await axios.post('/auth/login', loginForm.value)
-    token.value = data.token; username.value = data.username
-    score.value = data.score; role.value = data.role
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('username', data.username)
-    localStorage.setItem('score', data.score)
-    localStorage.setItem('role', data.role)
-    ElMessage.success('登录成功')
-    await refresh()
+    Object.assign(localStorage, { token:data.token, username:data.username, score:data.score, role:data.role })
+    token.value=data.token; username.value=data.username; score.value=data.score; role.value=data.role
+    ElMessage.success('登录成功'); await refresh()
   } catch (e) { ElMessage.error(e.response?.data?.msg || '登录失败') }
 }
-
 const onRegister = async () => {
-  try {
-    await axios.post('/auth/register', regForm.value)
-    ElMessage.success('注册成功，请登录'); tab.value = 'login'
-  } catch (e) { ElMessage.error(e.response?.data?.msg || '注册失败') }
+  try { await axios.post('/auth/register', regForm.value); ElMessage.success('注册成功'); tab.value='login' }
+  catch (e) { ElMessage.error(e.response?.data?.msg || '注册失败') }
 }
+const logout = () => { localStorage.clear(); token.value=''; role.value='user' }
 
-const logout = () => {
-    localStorage.clear(); token.value=''; username.value=''; score.value=0; role.value='user'
+const refresh = async () => {
+  const [c, b, a, ct] = await Promise.all([
+    axios.get('/challenges'), axios.get('/scoreboard'),
+    axios.get('/announcements'), axios.get('/contest')
+  ])
+  challenges.value=c.data; board.value=b.data; announcements.value=a.data; contest.value=ct.data
 }
-
-const loadChallenges = async () => { challenges.value = (await axios.get('/challenges')).data }
-const loadBoard = async () => { board.value = (await axios.get('/scoreboard')).data }
-const refresh = async () => { await Promise.all([loadChallenges(), loadBoard()]) }
 
 const openDetail = async (row) => {
   current.value = (await axios.get(`/challenges/${row.id}`)).data
-  flagInput.value = ''; envUrl.value = ''; envMsg.value = ''; wuNote.value = ''
+  comments.value = (await axios.get(`/comment/${row.id}`)).data
+  flagInput = ''; envUrl.value = ''; commentText.value = ''
   drawer.value = true
 }
 
 const doSubmit = async () => {
   try {
-    const { data } = await axios.post('/submit', { challenge_id: current.value.id, flag: flagInput.value })
-    if (data.correct) {
-      ElMessage.success(data.msg)
-      score.value = data.score; localStorage.setItem('score', data.score)
-      drawer.value = false; await refresh()
-    } else ElMessage.error(data.msg)
+    const { data } = await axios.post('/submit', { challenge_id: current.value.id, flag: flagInput })
+    if (data.correct) { ElMessage.success(data.msg); score.value=data.score; localStorage.setItem('score', data.score); drawer.value=false; await refresh() }
+    else ElMessage.error(data.msg)
   } catch (e) { ElMessage.error(e.response?.data?.msg || '提交失败') }
+}
+
+const buyHint = async (hid) => {
+  const { data } = await axios.post(`/hint/buy/${hid}`)
+  ElMessage.success(data.msg); await openDetail(current.value)
+}
+
+const postComment = async () => {
+  await axios.post(`/comment/${current.value.id}`, { content: commentText.value })
+  commentText.value = ''
+  comments.value = (await axios.get(`/comment/${current.value.id}`)).data
 }
 
 const startEnv = async () => {
   const { data } = await axios.post(`/env/start/${current.value.id}`)
   if (data.url) envUrl.value = data.url
-  if (data.message) envMsg.value = data.message
+  if (data.message) ElMessage.warning(data.message)
 }
-const stopEnv = async () => {
-  await axios.post(`/env/stop/${current.value.id}`)
-  envUrl.value = ''; ElMessage.success('环境已关闭')
-}
-const openEnv = (url) => window.open(url, '_blank')
-
+const stopEnv = async () => { await axios.post(`/env/stop/${current.value.id}`); envUrl.value='' }
+const renewEnv = async () => { await axios.post('/env/renew'); ElMessage.success('已续期') }
+const openEnv = (u) => window.open(u, '_blank')
 const downloadAttach = async (fid) => {
-  const res = await axios.get(`/attachment/${fid}`, { responseType: 'blob' })
-  const url = URL.createObjectURL(new Blob([res.data]))
-  const a = document.createElement('a'); a.href = url; a.click()
+  const res = await axios.get(`/attachment/${fid}`, { responseType:'blob' })
+  const a = document.createElement('a'); a.href=URL.createObjectURL(new Blob([res.data])); a.click()
 }
 
-const uploadWriteup = async ({ file }) => {
-  const fd = new FormData()
-  fd.append('file', file); fd.append('note', wuNote.value)
-  await axios.post(`/writeup/${current.value.id}`, fd)
-  ElMessage.success('WriteUp 已提交')
+const exportBoard = async () => {
+  const res = await axios.get('/admin/scoreboard/export', { responseType:'blob' })
+  const a = document.createElement('a'); a.href=URL.createObjectURL(new Blob([res.data])); a.download='scoreboard.csv'; a.click()
 }
 
-const createChallenge = async () => {
-  await axios.post('/admin/challenge', newCh.value)
-  ElMessage.success('题目已创建')
-  adminDialog.value = false
-  newCh.value = { title:'', category:'web', difficulty:'easy', score_value:100,
-                  flag:'', description:'', external_url:'', docker_image:'',
-                  docker_port:0, static_url:'' }
-  await refresh()
+const saveContest = async () => { await axios.post('/admin/contest', contestForm.value); ElMessage.success('已保存') }
+const postAnno = async () => { await axios.post('/admin/announcement', annoForm.value); ElMessage.success('已发布'); annoForm.value={title:'',content:''}; await refresh() }
+const createChallenge = async () => { await axios.post('/admin/challenge', newCh.value); ElMessage.success('已创建'); adminDialog.value=false; await refresh() }
+
+const showMe = async () => {
+  meDialog.value = true
+  const { data } = await axios.get('/me')
+  await nextTick()
+  const chart = echarts.init(radarRef.value)
+  chart.setOption({
+    title: { text: '我的解题分布', left: 'center' },
+    radar: { indicator: ['web','misc','crypto','reverse'].map(c => ({ name:c, max:10 })) },
+    series: [{ type:'radar', data:[{ value:['web','misc','crypto','reverse'].map(c => data.by_category[c]||0), name:'做题数' }] }]
+  })
+}
+// 把 meDialog 打开按钮接上
+window.__showMe = showMe
+
+const diffType = (d) => ({ easy:'success', medium:'warning', hard:'danger' }[d]||'')
+
+// 倒计时
+const tick = () => {
+  if (!contest.value.end_time) return
+  const end = new Date(contest.value.end_time.replace(' ', 'T'))
+  const diff = end - new Date()
+  if (diff <= 0) { countdown.value = '比赛已结束'; return }
+  const h = Math.floor(diff/3600000), m = Math.floor(diff%3600000/60000), s = Math.floor(diff%60000/1000)
+  countdown.value = `${h}时 ${m}分 ${s}秒`
 }
 
-const diffType = (d) => ({ easy:'success', medium:'warning', hard:'danger' }[d] || '')
-onMounted(() => { if (token.value) refresh() })
+onMounted(() => {
+  if (token.value) { refresh(); timer = setInterval(tick, 1000) }
+})
+onBeforeUnmount(() => timer && clearInterval(timer)
 </script>
 
 <style>
-body { margin: 0; background: #0f1419; color: #ddd; }
+body { margin:0; background:#0f1419; color:#ddd; }
 .header { background:#1a2229; color:#fff; display:flex; justify-content:space-between; align-items:center; padding:0 24px; }
 .header .el-button { color:#fff; }
+.countdown { background:#3a2a1a; color:#ffb866; text-align:center; padding:6px; font-size:15px; }
 .main { padding:16px; }
 .auth-wrap { display:flex; justify-content:center; padding-top:10vh; }
 .auth-card { width:420px; background:#fff; }
