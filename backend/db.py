@@ -19,6 +19,7 @@ class User(db.Model):
     team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=True)
     score = db.Column(db.Integer, default=0)
     solved_count = db.Column(db.Integer, default=0)
+    role = db.Column(db.String(16), default="user")   # admin / user
     create_time = db.Column(db.DateTime, default=datetime.now)
 
 
@@ -31,10 +32,22 @@ class Challenge(db.Model):
     description = db.Column(db.Text)                       # Markdown
     flag = db.Column(db.String(128), nullable=False)
     score_value = db.Column(db.Integer, default=100)
-    # 可选：需要拉起 Docker 容器的题
+    # 方式一：平台内 Docker 拉起
     docker_image = db.Column(db.String(200), default="")
-    docker_port = db.Column(db.Integer, default=0)         # 容器内监听端口
-    static_url = db.Column(db.String(255), default="")     # 无需容器时直接给链接
+    docker_port = db.Column(db.Integer, default=0)
+    # 方式二：外部靶机 URL（管理员填自己服务器地址）
+    external_url = db.Column(db.String(255), default="")
+    # 方式三：静态链接 / 附件
+    static_url = db.Column(db.String(255), default="")
+    create_time = db.Column(db.DateTime, default=datetime.now)
+
+
+class Attachment(db.Model):
+    """题目附件"""
+    id = db.Column(db.Integer, primary_key=True)
+    challenge_id = db.Column(db.Integer, db.ForeignKey('challenge.id'), nullable=False)
+    filename = db.Column(db.String(255))        # 原始文件名
+    stored_name = db.Column(db.String(255))      # 服务器上保存的随机文件名
 
 
 class Submission(db.Model):
@@ -45,3 +58,14 @@ class Submission(db.Model):
     flag_input = db.Column(db.String(255))
     is_correct = db.Column(db.Boolean, default=False)
     submitted_at = db.Column(db.DateTime, default=datetime.now)
+
+
+class Writeup(db.Model):
+    """选手 WriteUp"""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    challenge_id = db.Column(db.Integer, db.ForeignKey('challenge.id'), nullable=False)
+    filename = db.Column(db.String(255))
+    stored_name = db.Column(db.String(255))
+    content_note = db.Column(db.Text, default="")
+    created_at = db.Column(db.DateTime, default=datetime.now)
